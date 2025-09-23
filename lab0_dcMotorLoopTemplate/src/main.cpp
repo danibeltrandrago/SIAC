@@ -109,8 +109,14 @@ void TaskControl(void)
 
 	angle = (float)ISRCounter/4.0;//read input
 
-	//PID computation
-	// u=P+I+D;//compute PID output
+	
+	
+
+
+
+
+
+	
 
 	//check for motor direction
 	if (u<=0)
