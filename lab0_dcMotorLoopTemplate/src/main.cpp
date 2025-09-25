@@ -18,15 +18,26 @@ Seeed_vl53l0x VL53L0X; //TimeOfFlight distance sensor
 //Global variables
 float pitch=0;
 float roll=0;
-int datax=0;
-int datay=0;
-int dataz=0;
+float yaw = 0;
+short datax=0;
+short datay=0;
+short dataz=0;
 
 //motor
 volatile signed int ISRCounter=0;//used inside the ISR
 float angle=0;//used inside the controller
-float r=0;//reference angle to move the motor
+float r=90;//reference angle to move the motor
 float u=0;
+
+//PID Variables
+double Kp=10, Ki=0.01, Kd=1;
+
+double error = 0;
+double lastError = 0;
+double cumulativeError = 0;
+double rateError = 0;
+double elapsedTime = 0;
+double previousTime = 0;
 
 // function prototypes
 void ISREncoderA( void );// one hw interrupt driven isr to read the encoder pulse, the isr resumes the task
@@ -34,6 +45,7 @@ void ISREncoderB( void );// another hw interrupt driven isr to read the other en
 void TaskIMU(void);//Gets data from Inertial Measurement Unit 
 void TaskControl(void);//Computes the controller
 void TaskSupervison();//Sends data to the host PC via serial communication
+void computePID();
 
 void setup() 
 {
@@ -101,29 +113,32 @@ void TaskIMU(void)
 	IMU.getAcceleration(&datax, &datay, &dataz);
 	pitch = -360.0/6.2832*atan2(-datax,dataz);
 	roll =  360.0/6.2832*atan2(datay,dataz);
+	yaw = 360.0/6.2832*atan2(datax,datay);
+	r = roll;
 }
 
 void TaskControl(void)
 {
-	// r=?;
-
+	//Aqui conozco el angulo actual del motor
 	angle = (float)ISRCounter/4.0;//read input
+	long int currentTime = millis();
+	elapsedTime = 0.01;//(long int)(currentTime - previousTime);
+	previousTime = currentTime;
 
-	
-	
-
-
-
-
-
-	
+	error = r - angle;
+	cumulativeError += error * elapsedTime;
+	rateError = (error - lastError) / elapsedTime;
+	u = Kp * error+ Ki* cumulativeError;// + Kd * rateError;
+	lastError = error;
 
 	//check for motor direction
 	if (u<=0)
 	{
 		//turn CW
+		digitalWrite(pinDir, LOW);
 	}else{
 		//turn CCW
+		digitalWrite(pinDir, HIGH);
 	}
 	//check for saturation
 	if (u>255.0)
@@ -135,13 +150,13 @@ void TaskControl(void)
 		u=-255.0;
 	}
 
-	// analogWrite(pinPWM,?);//update output
+	Serial.print(u);
+	Serial.print(", ");
+	Serial.println(angle);
+	
+	analogWrite(pinPWM,u); //update output
 }
 
 void TaskSupervison()
 {
-	Serial.print((float)r);
-	Serial.print(",");
-	Serial.print((float)roll);
-	Serial.println();
 }
