@@ -30,7 +30,7 @@ float r=90;//reference angle to move the motor
 float u=0;
 
 //PID Variables
-double Kp=10, Ki=0.01, Kd=1;
+double Kp=10, Ki=0.08, Kd=0.0003;
 
 double error = 0;
 double lastError = 0;
@@ -113,8 +113,11 @@ void TaskIMU(void)
 	IMU.getAcceleration(&datax, &datay, &dataz);
 	pitch = -360.0/6.2832*atan2(-datax,dataz);
 	roll =  360.0/6.2832*atan2(datay,dataz);
-	yaw = 360.0/6.2832*atan2(datax,datay);
-	r = roll;
+	
+	Serial.print(roll);
+	r = (int)roll;
+	Serial.print(", ");
+	Serial.println(r);
 }
 
 void TaskControl(void)
@@ -128,7 +131,7 @@ void TaskControl(void)
 	error = r - angle;
 	cumulativeError += error * elapsedTime;
 	rateError = (error - lastError) / elapsedTime;
-	u = Kp * error+ Ki* cumulativeError;// + Kd * rateError;
+	u = Kp * error+ Ki* cumulativeError + Kd * rateError;
 	lastError = error;
 
 	//check for motor direction
@@ -150,9 +153,13 @@ void TaskControl(void)
 		u=-255.0;
 	}
 
-	Serial.print(u);
-	Serial.print(", ");
-	Serial.println(angle);
+	//Serial.print(u);
+	//Serial.print(", ");
+	//Serial.print(r);
+	//Serial.print(", ");
+	//Serial.print(error);
+	//Serial.print(", ");
+	//Serial.println(angle);
 	
 	analogWrite(pinPWM,u); //update output
 }
