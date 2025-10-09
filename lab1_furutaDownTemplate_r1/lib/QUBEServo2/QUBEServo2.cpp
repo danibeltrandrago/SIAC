@@ -1,26 +1,96 @@
-#include <Arduino.h>
-#include <SPI.h>// include the SPI library and the math library
+/*
+Quanser QUBE Servo 2 Core Library
 
-//Global variables
-float h=0.001;//sampling time in seconds
-float r=0;//reference
-float theta=0;//measured angle for the horizontal link (motor) in radians
-float thetaKMinus1=0;
-float thetaDot=0;
-float thetaDotFiltered=0;
-float alpha=0;//measured angle for the vertical link (pendulum) in radians
-float alphaKMinus1=0;
-float alphaDot=0;
-float alphaDotFiltered=0;
-float u=0;
-float K[4]={-1.7027,-0.7828,19.5906,1.4513};//put your gains here
-float x[4]={0,0,0,0};
-float motorVoltage=0;
-float currentSense=0;
-float taskSupervisionCounter=0;
+Created 2016 by Quanser Inc.
+www.quanser.com
+*/
+
+#include <Arduino.h>
+#include <SPI.h>
+#include "QUBEServo2.h"
+
+//Status Bit Masks
+const byte stallErrorMask = B00000100;
+const byte stallDetectedMask = B00000010;
+const byte amplifierFaultMask = B00000001;
+
+//Serial Variables
+static String dData;  // string that will be printed to the Arduino Serial Monitor
+static boolean dDataReady;  // true when there is a string ready to be printed
+static int dDataIndex;  // used to print the string one character at a time
+
+//Create the display class
+Display::Display()
+{
+	this->dData = "";
+	this->dDataReady = false;
+	this->dDataIndex = 0;
+
+	// reserve 256 bytes for the string that will be printed to the Arduino Serial Monitor
+	dData.reserve(256);
+}
+
+
+void Display::buildString(float theta, float alpha, float currentSense, int moduleID, int moduleStatus)
+{
+
+	if (this->dDataReady == false) {
+		// assemble the string to be printed to the Arduino Serial Monitor
+		// (Note that the String() conversion function is time consuming.  If more data
+		// needs to displayed than in this example, it may be necessary to assemble the
+		// displayData string over multiple sample periods.)
+
+		reset(moduleID, moduleStatus);
+
+		this->dData += "\r\nArm angle (deg): ";
+		float thetaDeg = theta * (180.0 / M_PI);
+		this->dData += String(round(thetaDeg));
+
+		this->dData += "\r\nPendulum angle (deg): ";
+		float alphaDeg = alpha * (180.0 / M_PI);
+		this->dData += String(round(alphaDeg));
+
+		this->dData += "\r\nCurrent (mA): ";
+		float currentSenseAmps = (3.3 / (4.0 * 4095.0)) * ((currentSense / 2.0) - 4095.0);
+		this->dData += String(currentSenseAmps * 1000);
+		this->dData += "\r\n\n";
+
+		this->dDataReady = true;  // the string is ready to be printed
+		this->dDataIndex = 0;
+	}
+}
+
+void Display::reset(int moduleID, int moduleStatus)
+{
+	this->dData = "";  // clear the string
+
+	if (moduleID == -1) {
+		this->dData += "Module ID: No module detected";
+	}
+	else {
+		this->dData += "Module ID: ";
+		this->dData += String(moduleID);
+	}
+
+  if (moduleStatus == 0) {
+    this->dData += "\r\nStatus: Good";  // '\r' is carriage return and '\n' is new line
+  }
+  else if (moduleStatus & amplifierFaultMask) {
+		this->dData += "\r\nStatus: Amplifier Fault";
+	}
+  else if (moduleStatus & stallErrorMask) {
+    this->dData += "\r\nStatus: Stall Error";
+  }
+  else if (moduleStatus & stallDetectedMask) {
+    this->dData += "\r\nStatus: Stall Detected";
+  }
+	else {
+		this->dData += "\r\nStatus: ";
+		this->dData += String(moduleStatus);
+	}
+}
 
 // initialize the SPI data to be written
-const int slaveSelectPin = 10;// set pin 10 as the slave select for the Quanser QUBE (Note that if a different pin is used for the slave select, pin 10 should be set as an output to prevent accidentally putting the Arduino UNO into slave mode.)
 byte mode = 1;                      // normal mode = 1
 byte writeMask = B00011111;         // Bxxxxxx11 to enable the motor, Bxxx111xx to enable the LEDs, Bx11xxxxx to enable writes to the encoders
 byte LEDRedMSB = 0;                 // red LED command MSB
@@ -45,111 +115,26 @@ byte currentSenseMSB = 0;           // motor current sense MSB
 byte currentSenseLSB = 0;           // motor current sense LSB
 
 // global variables for LED intensity (999 is maximum intensity, 0 is off)
-int LEDRed = 0;
-int LEDGreen = 0;
-int LEDBlue = 0;
-
-// function prototypes
-void resetQUBEServo2(void);
-void TaskQUBEServo2Data(void);//Gets data from Inertial Measurement Unit 
-void TaskControl(void);//Computes the controller
-void TaskSupervison(void);//Sends data to the host PC via serial communication
-
-void setup() 
-{
-  pinMode(LED_BUILTIN,OUTPUT);
-  Serial.begin(115200);// initialize serial communication
-
-  pinMode (slaveSelectPin, OUTPUT);// set the SPI slaveSelectPin as an output
-  SPI.begin();// initialize SPI  
-  resetQUBEServo2();//init QUBE Servo 2 rotary pendulum
-}
-
-void loop() 
-{  
-	unsigned long initTime=micros();
-
-	TaskQUBEServo2Data();
-	TaskControl();
-	TaskSupervison();
-
-	delayMicroseconds(h*1000000-(micros()-initTime));
-}
-
-void TaskControl(void)
-{	
-  r=0;
-
-  thetaDot=(theta-thetaKMinus1)/0.001;
-  alphaDot=(alpha-alphaKMinus1)/0.001;
-  thetaDotFiltered=(1.0-0.9512)*thetaDot+0.9512*thetaDotFiltered;
-  alphaDotFiltered=(1.0-0.9512)*alphaDot+0.9512*alphaDotFiltered;
-  thetaKMinus1=theta;
-  alphaKMinus1=alpha;
-
-  x[0]=theta;
-  x[1]=thetaDotFiltered;
-  x[2]=alpha;
-  x[3]=alphaDotFiltered;
-
-  if ( (alpha>(-30.0*2.0*PI/360.0)) &&  (alpha<(30.0*2.0*PI/360.0)) )//the pendulum is within the convergence zone to apply control
-  {
-    //u=-K[0]*x[0]; //?;//compute your controller here
-    // for (unsigned int i = 0; i < 4;i++)
-    // {
-    //   Serial.print("K[");
-    //   Serial.print(i);
-    //   Serial.print("]*x[");
-    //   Serial.print(i);
-    //   Serial.print("]: ");
-    //   Serial.println(K[i]*x[i]);
-    // }
-    u = -K[0]*x[0] - K[1]*x[1] - K[2]*x[2] - K[3]*x[3];
-    LEDRed = 100;
-    LEDGreen = 1000-max(0,fabs(r-theta)*250);
-    LEDBlue = min(999,fabs(r-theta)*250); 
-  }else{
-    u=0; //the pendulum falls down
-    LEDRed = 800;
-    LEDGreen = 150;
-    LEDBlue = 150; 
-  }
-  
-	//check for saturation
-	if (u>15.0)
-	{
-		u=15.0;
-	}
-	if (u<-15.0)
-	{
-		u=-15.0;
-	}
-  motorVoltage=-u; //Note that u>0 means rotating CCW according to the documentation. TODO: double check it!!!-->Done
-}
-
-void TaskSupervison(void)
-{  
-  taskSupervisionCounter++;
-  if (taskSupervisionCounter==200)
-  {   
-    Serial.print((float)r);
-    Serial.print(",");
-    Serial.print((float)theta);
-    Serial.print(",");
-    Serial.print((float)alpha);
-    Serial.print(",");
-    Serial.print((float)u);    
-    Serial.println();
-    taskSupervisionCounter=0;
-  }
-}
-
+//int LEDRed = 0;
+//int LEDGreen = 0;
+//int LEDBlue = 0;
+extern int LEDRed;
+extern int LEDGreen;
+extern int LEDBlue;
+extern float motorPWM;
 // This function is used to clear the stall error and reset the encoder values to 0.
 // The motor and LEDs are turned off when this function is called.
-void resetQUBEServo2(void) 
-{
+
+// set pin 10 as the slave select for the Quanser QUBE
+// (Note that if a different pin is used for the slave select, pin 10 should be set as
+// an output to prevent accidentally putting the Arduino UNO into slave mode.)
+const int slaveSelectPin = 10;
+
+void resetQUBEServo() {
+  
   // enable the motor and LEDs, and enable writes to the encoders
   writeMask = B01111111;
+  
   // turn off the LEDs
   LEDRedMSB = 0;
   LEDRedLSB = 0;
@@ -157,6 +142,7 @@ void resetQUBEServo2(void)
   LEDGreenLSB = 0;
   LEDBlueMSB = 0;
   LEDBlueLSB = 0;
+  
   // reset the encoder values to 0
   encoder0ByteSet[2] = 0;
   encoder0ByteSet[1] = 0;
@@ -164,14 +150,16 @@ void resetQUBEServo2(void)
   encoder1ByteSet[2] = 0;
   encoder1ByteSet[1] = 0;
   encoder1ByteSet[0] = 0;
+  
   // turn off the motor, and clear the stall error by disabling the amplifier
   motorMSB = 0;  // motor command MSB is B0xxxxxxx to disable the amplifier
   motorLSB = 0;
+  
   // initialize the SPI bus using the defined speed, data order and data mode
   SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE2));
   digitalWrite(slaveSelectPin, HIGH);  // take the slave select pin high to de-select the device
   digitalWrite(slaveSelectPin, LOW);   // take the slave select pin low to select the device
-
+  
   // send and receive the data via SPI
   moduleIDMSB = SPI.transfer(mode);                    // read the module ID MSB, send the mode
   moduleIDLSB = SPI.transfer(0);                       // read the module ID LSB
@@ -198,9 +186,16 @@ void resetQUBEServo2(void)
   motorMSB = 0x80;  // enable the amplifier
 }
 
-//data is both get and sent in this function using spi data communication
-void TaskQUBEServo2Data(void)
+float theta = 0;//horizontal angle
+float alpha = 0;//pendulum angle
+float currentSense = 0;
+// set pin 10 as the slave select for the Quanser QUBE
+// (Note that if a different pin is used for the slave select, pin 10 should be set as
+// an output to prevent accidentally putting the Arduino UNO into slave mode.)
+void getQUBEData()
 {
+   // initialize the SPI bus using the defined speed, data order and data mode
+    //SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE2));
     // take the slave select pin low to select the device
     digitalWrite(slaveSelectPin, LOW);
     
@@ -220,8 +215,7 @@ void TaskQUBEServo2Data(void)
     currentSenseMSB = SPI.transfer(encoder1ByteSet[2]);  // read the current sense MSB, send encoder1 byte 2
     currentSenseLSB = SPI.transfer(encoder1ByteSet[1]);  // read the current sense LSB, send encoder1 byte 1
     SPI.transfer(encoder1ByteSet[0]);                    // send encoder1 byte 0
-    
-    /*Module ID*/
+/*Module ID*/
     int moduleID = (moduleIDMSB << 8) | moduleIDLSB;
     
     /*Motor Encoder Counts*/
@@ -256,11 +250,10 @@ void TaskQUBEServo2Data(void)
     LEDBlueMSB = (byte)(LEDBlue >> 8);
     LEDBlueLSB = (byte)(LEDBlue & 0x00FF);
 
-    float motorPWM = motorVoltage * (625.0 / 15.0);
-    int motor = (int)motorPWM;  // convert float to int (2 bytes)
-    motor = motor | 0x8000;  // motor command MSB must be B1xxxxxxx to enable the amplifier
-    motorMSB = (byte)(motor >> 8);
-    motorLSB = (byte)(motor & 0x00FF);   
+      int motor = (int)motorPWM;  // convert float to int (2 bytes)
+      motor = motor | 0x8000;  // motor command MSB must be B1xxxxxxx to enable the amplifier
+      motorMSB = (byte)(motor >> 8);
+      motorLSB = (byte)(motor & 0x00FF);   
     // send the motor data via SPI
     SPI.transfer(motorMSB);
     SPI.transfer(motorLSB);
@@ -268,4 +261,5 @@ void TaskQUBEServo2Data(void)
     // take the slave select pin high to de-select the device
     digitalWrite(slaveSelectPin, HIGH);
     SPI.endTransaction();
+
 }

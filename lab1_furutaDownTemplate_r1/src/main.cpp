@@ -13,7 +13,7 @@ float alphaKMinus1=0;
 float alphaDot=0;
 float alphaDotFiltered=0;
 float u=0;
-float K[4]={-1.7027,-0.7828,19.5906,1.4513};//put your gains here
+float K[4]={0,0,0,0};//put your gains here
 float x[4]={0,0,0,0};
 float motorVoltage=0;
 float currentSense=0;
@@ -77,8 +77,8 @@ void loop()
 }
 
 void TaskControl(void)
-{	
-  r=0;
+{
+	r=0;
 
   thetaDot=(theta-thetaKMinus1)/0.001;
   alphaDot=(alpha-alphaKMinus1)/0.001;
@@ -92,24 +92,18 @@ void TaskControl(void)
   x[2]=alpha;
   x[3]=alphaDotFiltered;
 
-  if ( (alpha>(-30.0*2.0*PI/360.0)) &&  (alpha<(30.0*2.0*PI/360.0)) )//the pendulum is within the convergence zone to apply control
+  if (millis()<20000)//the pendulum will be controlled only 20 seconds, after that it will stop
   {
-    //u=-K[0]*x[0]; //?;//compute your controller here
-    // for (unsigned int i = 0; i < 4;i++)
-    // {
-    //   Serial.print("K[");
-    //   Serial.print(i);
-    //   Serial.print("]*x[");
-    //   Serial.print(i);
-    //   Serial.print("]: ");
-    //   Serial.println(K[i]*x[i]);
-    // }
-    u = -K[0]*x[0] - K[1]*x[1] - K[2]*x[2] - K[3]*x[3];
+    //u=0;//?;//compute your controller here
+    for (int i = 0; i < sizeof(x);i++)
+    {
+      u-= K[i]*x[i];
+    }
     LEDRed = 100;
     LEDGreen = 1000-max(0,fabs(r-theta)*250);
     LEDBlue = min(999,fabs(r-theta)*250); 
   }else{
-    u=0; //the pendulum falls down
+    u=0;//the time is over
     LEDRed = 800;
     LEDGreen = 150;
     LEDBlue = 150; 
@@ -124,14 +118,14 @@ void TaskControl(void)
 	{
 		u=-15.0;
 	}
-  motorVoltage=-u; //Note that u>0 means rotating CCW according to the documentation. TODO: double check it!!!-->Done
+  motorVoltage=-u;//Note that u>0 means rotating CCW according to the documentation. TODO: double check it!!!-->Done
 }
 
 void TaskSupervison(void)
 {  
   taskSupervisionCounter++;
   if (taskSupervisionCounter==200)
-  {   
+  {    
     Serial.print((float)r);
     Serial.print(",");
     Serial.print((float)theta);
@@ -244,6 +238,7 @@ void TaskQUBEServo2Data(void)
     }    
     // convert the pendulum encoder counts to angle alpha in radians
     alpha = (float)encoder1 * (2.0 * M_PI / 2048) - M_PI;
+    if (alpha<0) alpha=alpha+2.0*M_PI;
 
     /*Current Sense Value*/
     currentSense = (currentSenseMSB << 8) | currentSenseLSB;
@@ -262,10 +257,12 @@ void TaskQUBEServo2Data(void)
     motorMSB = (byte)(motor >> 8);
     motorLSB = (byte)(motor & 0x00FF);   
     // send the motor data via SPI
-    SPI.transfer(motorMSB);
+    SPI.transfer(motorMSB); 
     SPI.transfer(motorLSB);
     
     // take the slave select pin high to de-select the device
     digitalWrite(slaveSelectPin, HIGH);
     SPI.endTransaction();
 }
+
+ 
