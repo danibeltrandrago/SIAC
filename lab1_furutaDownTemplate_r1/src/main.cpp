@@ -13,8 +13,9 @@ float alphaKMinus1=0;
 float alphaDot=0;
 float alphaDotFiltered=0;
 float u=0;
-float K[4]={0,0,0,0};//put your gains here
+float K[4]={1.7028,0.5811,-4.1045,-0.0661};//put your gains here
 float x[4]={0,0,0,0};
+float xeq[4] = {0,0,PI,0};
 float motorVoltage=0;
 float currentSense=0;
 float taskSupervisionCounter=0;
@@ -87,18 +88,15 @@ void TaskControl(void)
   thetaKMinus1=theta;
   alphaKMinus1=alpha;
 
-  x[0]=theta;
-  x[1]=thetaDotFiltered;
-  x[2]=alpha;
-  x[3]=alphaDotFiltered;
+  x[0]=theta - xeq[0];
+  x[1]=thetaDotFiltered - xeq[1];
+  x[2]=alpha - xeq[2];
+  x[3]=alphaDotFiltered - xeq[3];
 
-  if (millis()<20000)//the pendulum will be controlled only 20 seconds, after that it will stop
+  if (millis()<200000000)//the pendulum will be controlled only 20 seconds, after that it will stop
   {
     //u=0;//?;//compute your controller here
-    for (int i = 0; i < sizeof(x);i++)
-    {
-      u-= K[i]*x[i];
-    }
+    u = -K[0]*x[0] -K[1]*x[1] -K[2]*x[2] -K[3]*x[3];
     LEDRed = 100;
     LEDGreen = 1000-max(0,fabs(r-theta)*250);
     LEDBlue = min(999,fabs(r-theta)*250); 
@@ -132,7 +130,7 @@ void TaskSupervison(void)
     Serial.print(",");
     Serial.print((float)alpha);
     Serial.print(",");
-    Serial.print((float)u);    
+    Serial.print((float)u);
     Serial.println();
     taskSupervisionCounter=0;
   }
@@ -140,7 +138,7 @@ void TaskSupervison(void)
 
 // This function is used to clear the stall error and reset the encoder values to 0.
 // The motor and LEDs are turned off when this function is called.
-void resetQUBEServo2(void) 
+void resetQUBEServo2(void)
 {
   // enable the motor and LEDs, and enable writes to the encoders
   writeMask = B01111111;
