@@ -3,7 +3,9 @@
 
 //Global variables
 float h=0.001;//sampling time in seconds
-float r=0;//reference
+float r=0.5;//reference
+float Nx[4] = {1,0,0,0};
+float Nu = 0;
 float theta=0;//measured angle for the horizontal link (motor) in radians
 float thetaKMinus1=0;
 float thetaDot=0;
@@ -13,11 +15,15 @@ float alphaKMinus1=0;
 float alphaDot=0;
 float alphaDotFiltered=0;
 float u=0;
+float ueq = 0;
 float K[4]={-1.7027,-0.7828,19.5906,1.4513};//put your gains here
 float x[4]={0,0,0,0};
+float xeq[4] = {0,0,0,0};
 float motorVoltage=0;
 float currentSense=0;
 float taskSupervisionCounter=0;
+
+unsigned long old_time = 0;
 
 // initialize the SPI data to be written
 const int slaveSelectPin = 10;// set pin 10 as the slave select for the Quanser QUBE (Note that if a different pin is used for the slave select, pin 10 should be set as an output to prevent accidentally putting the Arduino UNO into slave mode.)
@@ -63,6 +69,7 @@ void setup()
   pinMode (slaveSelectPin, OUTPUT);// set the SPI slaveSelectPin as an output
   SPI.begin();// initialize SPI  
   resetQUBEServo2();//init QUBE Servo 2 rotary pendulum
+  old_time = millis();
 }
 
 void loop() 
@@ -78,7 +85,11 @@ void loop()
 
 void TaskControl(void)
 {	
-  r=0;
+  if(millis() - old_time > 1000) 
+  {
+    r = r == 0.5 ? -0.5 : 0.5;
+    old_time = millis();
+  }
 
   thetaDot=(theta-thetaKMinus1)/0.001;
   alphaDot=(alpha-alphaKMinus1)/0.001;
@@ -87,24 +98,21 @@ void TaskControl(void)
   thetaKMinus1=theta;
   alphaKMinus1=alpha;
 
-  x[0]=theta;
-  x[1]=thetaDotFiltered;
-  x[2]=alpha;
-  x[3]=alphaDotFiltered;
+  x[0]=theta - xeq[0];
+  x[1]=thetaDotFiltered - xeq[1];
+  x[2]=alpha - xeq[2];
+  x[3]=alphaDotFiltered - xeq[3];
+
+  for (int i = 0; i < 4; i++)
+  {
+    x[i] = Nx[i]*r - x[i];
+  }
 
   if ( (alpha>(-30.0*2.0*PI/360.0)) &&  (alpha<(30.0*2.0*PI/360.0)) )//the pendulum is within the convergence zone to apply control
   {
-    //u=-K[0]*x[0]; //?;//compute your controller here
-    // for (unsigned int i = 0; i < 4;i++)
-    // {
-    //   Serial.print("K[");
-    //   Serial.print(i);
-    //   Serial.print("]*x[");
-    //   Serial.print(i);
-    //   Serial.print("]: ");
-    //   Serial.println(K[i]*x[i]);
-    // }
-    u = -K[0]*x[0] - K[1]*x[1] - K[2]*x[2] - K[3]*x[3];
+    u = K[0]*x[0] + K[1]*x[1] + K[2]*x[2] + K[3]*x[3];
+    u += r*Nu;
+    u += ueq;
     LEDRed = 100;
     LEDGreen = 1000-max(0,fabs(r-theta)*250);
     LEDBlue = min(999,fabs(r-theta)*250); 
